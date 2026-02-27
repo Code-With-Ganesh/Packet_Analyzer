@@ -318,30 +318,24 @@ private:
 
         // ------------------------------------------------------------------
         // 5. QUIC — UDP port 443 (YouTube, Google, Chrome ka fast protocol)
-        //    QUIC ki SNI encrypted hoti hai, lekin port + IP se identify ho sakta hai
+        //    QUIC ki SNI encrypted hoti hai — IP ranges se identify karte hain
         // ------------------------------------------------------------------
         if (is_udp && (dst == 443 || src == 443)) {
-            flow.app_type = AppType::QUIC;
-            flow.classified = true;
-
-            if (pkt.payload_length > 0) {
-                const uint8_t first_byte = pkt.data[pkt.payload_offset];
-                // QUIC Long Header: top 2 bits must be 11 (0xC0 range)
-                if ((first_byte & 0xC0) == 0xC0 && pkt.payload_length > 5) {
-                    // Identify Google IPs: 142.250.x.x, 172.217.x.x, 216.58.x.x
-                    uint32_t dip = pkt.tuple.dst_ip;
-                    uint8_t o1 = dip & 0xFF;
-                    uint8_t o2 = (dip >> 8) & 0xFF;
-                    if ((o1 == 142 && o2 == 250) ||
-                        (o1 == 172 && o2 == 217) ||
-                        (o1 == 216 && o2 == 58)) {
-                        flow.sni = "[QUIC/Google]";
-                        flow.app_type = AppType::GOOGLE;
-                    } else {
-                        flow.sni = "[QUIC/Encrypted]";
-                    }
-                }
+            // Pehle IP range se try karo
+            AppType ip_app = ipToAppType(pkt.tuple.dst_ip);
+            if (ip_app == AppType::UNKNOWN) {
+                ip_app = ipToAppType(pkt.tuple.src_ip); // reverse direction bhi try karo
             }
+
+            if (ip_app != AppType::UNKNOWN) {
+                flow.app_type = ip_app;
+                // SNI mein label lagao taaki output mein dikh sake
+                flow.sni = "[QUIC/" + appTypeToString(ip_app) + "]";
+            } else {
+                flow.app_type = AppType::QUIC;
+                flow.sni = "[QUIC/Encrypted]";
+            }
+            flow.classified = true;
             return;
         }
 
@@ -364,9 +358,15 @@ private:
         }
 
         // ------------------------------------------------------------------
-        // 8. Port-based fallback
+        // 8. Port-based fallback + IP-based identification
         // ------------------------------------------------------------------
-        if (dst == 443 || src == 443) { flow.app_type = AppType::HTTPS; return; }
+        if (dst == 443 || src == 443) {
+            // IP se identify karne ki koshish karo
+            AppType ip_app = ipToAppType(pkt.tuple.dst_ip);
+            if (ip_app == AppType::UNKNOWN) ip_app = ipToAppType(pkt.tuple.src_ip);
+            flow.app_type = (ip_app != AppType::UNKNOWN) ? ip_app : AppType::HTTPS;
+            return;
+        }
         if (dst == 80  || dst == 8080){ flow.app_type = AppType::HTTP;  return; }
     }
 };

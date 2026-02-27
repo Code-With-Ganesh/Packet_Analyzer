@@ -193,4 +193,102 @@ AppType sniToAppType(const std::string& sni) {
     return AppType::HTTPS;
 }
 
+// ============================================================================
+// IP Address based App Detection (QUIC ke liye — SNI encrypted hoti hai)
+// Known IP ranges se app identify karte hain
+// ============================================================================
+AppType ipToAppType(uint32_t ip) {
+    // IP bytes (little-endian storage mein)
+    uint8_t o1 = (ip)       & 0xFF;  // First octet
+    uint8_t o2 = (ip >> 8)  & 0xFF;  // Second octet
+    uint8_t o3 = (ip >> 16) & 0xFF;  // Third octet
+
+    // -----------------------------------------------------------------------
+    // YouTube / Google IP ranges
+    // YouTube videos: 142.250.x.x, 172.217.x.x, 216.58.x.x, 74.125.x.x
+    // Google APIs:    142.250.x.x, 173.194.x.x
+    // -----------------------------------------------------------------------
+    if (o1 == 142 && o2 == 250)  return AppType::YOUTUBE;   // YouTube CDN
+    if (o1 == 172 && o2 == 217)  return AppType::GOOGLE;
+    if (o1 == 216 && o2 == 58)   return AppType::GOOGLE;
+    if (o1 == 74  && o2 == 125)  return AppType::YOUTUBE;   // YouTube streams
+    if (o1 == 173 && o2 == 194)  return AppType::GOOGLE;
+    if (o1 == 34  && o2 == 64)   return AppType::GOOGLE;    // Google Cloud
+    if (o1 == 34  && o2 == 65)   return AppType::GOOGLE;
+    if (o1 == 34  && o2 == 66)   return AppType::GOOGLE;
+    if (o1 == 34  && o2 == 67)   return AppType::YOUTUBE;
+
+    // -----------------------------------------------------------------------
+    // Facebook / Instagram / WhatsApp
+    // Meta IP range: 157.240.x.x, 31.13.x.x, 179.60.x.x, 66.220.x.x
+    // -----------------------------------------------------------------------
+    if (o1 == 157 && o2 == 240)  return AppType::FACEBOOK;
+    if (o1 == 31  && o2 == 13)   return AppType::FACEBOOK;
+    if (o1 == 179 && o2 == 60)   return AppType::WHATSAPP;
+    if (o1 == 66  && o2 == 220)  return AppType::FACEBOOK;
+    if (o1 == 69  && o2 == 171)  return AppType::INSTAGRAM;
+    if (o1 == 185 && o2 == 60)   return AppType::WHATSAPP;
+
+    // -----------------------------------------------------------------------
+    // Netflix
+    // Netflix CDN: 198.38.x.x, 198.45.x.x, 23.246.x.x, 37.77.x.x
+    // -----------------------------------------------------------------------
+    if (o1 == 198 && o2 == 38)   return AppType::NETFLIX;
+    if (o1 == 198 && o2 == 45)   return AppType::NETFLIX;
+    if (o1 == 23  && o2 == 246)  return AppType::NETFLIX;
+    if (o1 == 37  && o2 == 77)   return AppType::NETFLIX;
+
+    // -----------------------------------------------------------------------
+    // Microsoft / Office 365
+    // Azure: 13.64-107.x, 20.x.x.x, 40.x.x.x, 52.x.x.x
+    // -----------------------------------------------------------------------
+    if (o1 == 20)                return AppType::MICROSOFT;
+    if (o1 == 40  && o2 <= 127)  return AppType::MICROSOFT;
+    if (o1 == 13  && o2 == 107)  return AppType::MICROSOFT;
+    if (o1 == 52  && o2 >= 96)   return AppType::MICROSOFT;
+
+    // -----------------------------------------------------------------------
+    // Apple / iCloud
+    // Apple: 17.x.x.x (entire /8 block Apple ka hai!)
+    // -----------------------------------------------------------------------
+    if (o1 == 17)                return AppType::APPLE;
+
+    // -----------------------------------------------------------------------
+    // Amazon / AWS / Prime Video
+    // AWS: 52.0-95.x, 54.x.x.x, 3.x.x.x
+    // -----------------------------------------------------------------------
+    if (o1 == 54)                return AppType::AMAZON;
+    if (o1 == 3   && o2 <= 128)  return AppType::AMAZON;
+
+    // -----------------------------------------------------------------------
+    // Cloudflare (1.1.1.1, 1.0.0.1, 104.16-31.x.x)
+    // -----------------------------------------------------------------------
+    if (o1 == 1   && (o2 == 1 || o2 == 0))   return AppType::CLOUDFLARE;
+    if (o1 == 104 && o2 >= 16 && o2 <= 31)   return AppType::CLOUDFLARE;
+    if (o1 == 104 && o2 >= 200 && o2 <= 255) return AppType::CLOUDFLARE;
+
+    // -----------------------------------------------------------------------
+    // Discord: 66.22.x.x, 162.159.x.x (Cloudflare-hosted)
+    // -----------------------------------------------------------------------
+    if (o1 == 66  && o2 == 22)   return AppType::DISCORD;
+
+    // -----------------------------------------------------------------------
+    // Telegram: 91.108.x.x, 149.154.x.x, 185.76.151.x
+    // -----------------------------------------------------------------------
+    if (o1 == 91  && o2 == 108)  return AppType::TELEGRAM;
+    if (o1 == 149 && o2 == 154)  return AppType::TELEGRAM;
+
+    // -----------------------------------------------------------------------
+    // TikTok / ByteDance: 184.84.x.x, 23.57.x.x
+    // -----------------------------------------------------------------------
+    if (o1 == 184 && o2 == 84)   return AppType::TIKTOK;
+
+    // -----------------------------------------------------------------------
+    // Spotify: 35.186.x.x, 35.188.x.x (Google Cloud pe hosted)
+    // -----------------------------------------------------------------------
+    if (o1 == 35  && (o2 == 186 || o2 == 188)) return AppType::SPOTIFY;
+
+    return AppType::UNKNOWN;
+}
+
 } // namespace DPI

@@ -86,6 +86,9 @@ enum class AppType {
 std::string appTypeToString(AppType type);
 AppType sniToAppType(const std::string& sni);
 
+// IP address se app identify karo (QUIC ke liye — SNI encrypted hoti hai)
+AppType ipToAppType(uint32_t ip);
+
 // ============================================================================
 // Connection State
 // ============================================================================
