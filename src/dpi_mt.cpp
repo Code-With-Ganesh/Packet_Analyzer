@@ -295,6 +295,7 @@ struct FlowRecord {
     uint64_t bytes;
     uint32_t start_ts;      // First packet timestamp
     std::string status;     // FORWARDED / BLOCKED
+    std::string country;    // GeoIP country
 
     static std::string ipToStr(uint32_t ip) {
         return std::to_string(ip & 0xFF) + "." +
@@ -504,6 +505,7 @@ private:
                 rec.bytes    = flow.bytes;
                 rec.start_ts = flow.start_ts;
                 rec.status   = flow.blocked ? "BLOCKED" : "FORWARDED";
+                rec.country  = ipToCountry(pkt.tuple.dst_ip);
                 stats_->recordFlow(rec);
             }
 
@@ -962,7 +964,7 @@ public:
             return;
         }
         // Header row
-        f << "src_ip,dst_ip,src_port,dst_port,protocol,app,domain,packets,bytes,start_ts,status\n";
+        f << "src_ip,dst_ip,src_port,dst_port,protocol,app,domain,packets,bytes,start_ts,status,country\n";
         {
             std::lock_guard<std::mutex> lock(stats_.app_mutex);
             for (const auto& r : stats_.flow_records) {
@@ -980,7 +982,8 @@ public:
                   << r.packets << ","
                   << r.bytes << ","
                   << r.start_ts << ","
-                  << r.status << "\n";
+                  << r.status << ","
+                  << r.country << "\n";
             }
         }
         std::cout << "[Export] CSV written: " << filename
@@ -1055,7 +1058,8 @@ public:
                   << ", \"pkts\": "    << r.packets
                   << ", \"bytes\": "   << r.bytes
                   << ", \"ts\": "      << r.start_ts
-                  << ", \"status\": \"" << esc(r.status) << "\"}";
+                  << ", \"status\": \"" << esc(r.status) << "\""
+                  << ", \"country\": \"" << esc(r.country) << "\"}";
                 if (i + 1 < stats_.flow_records.size()) f << ",";
                 f << "\n";
             }

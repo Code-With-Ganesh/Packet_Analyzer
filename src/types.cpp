@@ -291,4 +291,82 @@ AppType ipToAppType(uint32_t ip) {
     return AppType::UNKNOWN;
 }
 
+// =============================================================================
+// GeoIP — Approximate country detection from IP ranges
+// Based on well-known public IP allocations (IANA/RIR assignments)
+// =============================================================================
+std::string ipToCountry(uint32_t ip) {
+    uint8_t o1 = (ip      ) & 0xFF;
+    uint8_t o2 = (ip >>  8) & 0xFF;
+
+    // Private / Local range — no country
+    if (o1 == 10)  return "LAN";
+    if (o1 == 172 && o2 >= 16 && o2 <= 31) return "LAN";
+    if (o1 == 192 && o2 == 168) return "LAN";
+    if (o1 == 127) return "Localhost";
+
+    // -----------------------------------------------------------------------
+    // USA — Big tech companies mostly US-based
+    // -----------------------------------------------------------------------
+    if (o1 == 8  && o2 == 8)   return "USA";  // Google DNS
+    if (o1 == 8  && o2 == 4)   return "USA";  // LevelOne DNS
+    if (o1 == 1  && o2 == 1)   return "USA";  // Cloudflare DNS
+    if (o1 == 74  && o2 == 125) return "USA"; // Google
+    if (o1 == 142 && o2 == 250) return "USA"; // Google
+    if (o1 == 172 && o2 == 217) return "USA"; // Google
+    if (o1 == 216 && o2 == 58)  return "USA"; // Google
+    if (o1 == 157 && o2 == 240) return "USA"; // Meta/Facebook
+    if (o1 == 31  && o2 == 13)  return "USA"; // Meta/Facebook
+    if (o1 == 57  && (o2 >= 140 && o2 <= 150)) return "USA"; // Meta
+    if (o1 == 151 && o2 == 101) return "USA"; // Fastly CDN
+    if (o1 == 199 && o2 == 96)  return "USA"; // Twitter
+    if (o1 == 104 && o2 >= 16 && o2 <= 31) return "USA"; // Cloudflare
+    if (o1 == 198 && o2 == 38)  return "USA"; // Netflix
+    if (o1 == 52)  return "USA";  // Amazon AWS
+    if (o1 == 54)  return "USA";  // Amazon AWS
+    if (o1 == 3   && o2 >= 80 && o2 <= 95) return "USA";  // Amazon AWS
+    if (o1 == 13  && o2 >= 32 && o2 <= 64) return "USA"; // Amazon/Microsoft
+    if (o1 == 20)  return "USA";  // Microsoft Azure
+    if (o1 == 40)  return "USA";  // Microsoft
+    if (o1 == 23  && o2 == 195) return "USA"; // Akamai
+    if (o1 == 23  && o2 == 96)  return "USA"; // Microsoft Azure
+
+    // -----------------------------------------------------------------------
+    // India
+    // -----------------------------------------------------------------------
+    if (o1 == 116 && (o2 >= 68 && o2 <= 120)) return "India"; // Jio/BSNL
+    if (o1 == 117 && o2 >= 192) return "India"; // Airtel
+    if (o1 == 182 && o2 >= 64)  return "India"; // Airtel/Jio
+    if (o1 == 183 && o2 >= 80)  return "India"; // Jio
+    if (o1 == 49  && o2 == 36)  return "India"; // Jio Fiber
+    if (o1 == 49  && o2 == 44)  return "India"; // Airtel
+    if (o1 == 106 && o2 >= 64 && o2 <= 128) return "India"; // ACT/Hathway
+    if (o1 == 122 && o2 >= 160) return "India"; // BSNL
+    if (o1 == 27  && o2 >= 56 && o2 <= 63) return "India"; // Vodafone IN
+    if (o1 == 110 && o2 >= 224) return "India"; // BSNL
+
+    // -----------------------------------------------------------------------
+    // Europe
+    // -----------------------------------------------------------------------
+    if (o1 == 51  && o2 <= 16)  return "UK";     // BT/Virgin
+    if (o1 == 86  && o2 >= 100) return "Germany";
+    if (o1 == 87  && o2 <= 64)  return "Germany";
+    if (o1 == 90  && o2 >= 200) return "France";
+    if (o1 == 77  && o2 >= 200) return "Europe"; // Various EU
+    if (o1 == 185 && o2 >= 100) return "Europe";
+
+    // -----------------------------------------------------------------------
+    // Asia Pacific
+    // -----------------------------------------------------------------------
+    if (o1 == 202 && o2 >= 80)  return "China";
+    if (o1 == 203 && o2 <= 50)  return "China";
+    if (o1 == 114 && o2 <= 64)  return "China";
+    if (o1 == 175 && o2 >= 100) return "China";
+    if (o1 == 36  && o2 >= 64 && o2 <= 128) return "Japan";
+    if (o1 == 27  && o2 >= 80 && o2 <= 95) return "South Korea";
+    if (o1 == 220 && o2 >= 64 && o2 <= 96) return "Singapore";
+
+    return "Unknown";
+}
+
 } // namespace DPI

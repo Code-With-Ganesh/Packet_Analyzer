@@ -29,7 +29,7 @@ namespace DPI {
 //            v (hash to select LB)
 //   +--------+----------+
 //   |   Load Balancers  |  (2 LB threads)
-//   |   LB0      LB1    |
+//   |   LB0      LB1    |h
 //   +----+--------+-----+
 //        |        |
 //        v        v (hash to select FP within LB's pool)
