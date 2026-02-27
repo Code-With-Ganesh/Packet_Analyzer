@@ -219,6 +219,7 @@ struct FlowEntry {
     std::string sni;
     uint64_t packets = 0;
     uint64_t bytes = 0;
+    uint32_t start_ts = 0;   // First packet timestamp
     bool blocked = false;
     bool classified = false;
 };
@@ -280,6 +281,105 @@ private:
 };
 
 // =============================================================================
+// FlowRecord — Ek poora connection ka record (CSV/JSON export ke liye)
+// =============================================================================
+struct FlowRecord {
+    std::string src_ip;
+    std::string dst_ip;
+    uint16_t src_port;
+    uint16_t dst_port;
+    std::string protocol;   // TCP / UDP
+    std::string app;        // YouTube, Facebook, etc.
+    std::string domain;     // SNI / DNS correlated domain
+    uint64_t packets;
+    uint64_t bytes;
+    uint32_t start_ts;      // First packet timestamp
+    std::string status;     // FORWARDED / BLOCKED
+
+    static std::string ipToStr(uint32_t ip) {
+        return std::to_string(ip & 0xFF) + "." +
+               std::to_string((ip >> 8) & 0xFF) + "." +
+               std::to_string((ip >> 16) & 0xFF) + "." +
+               std::to_string((ip >> 24) & 0xFF);
+    }
+};
+
+// =============================================================================
+// ThreatDetector — Port scan, DDoS, aur suspicious traffic detect karta hai
+// =============================================================================
+class ThreatDetector {
+public:
+    struct Alert {
+        std::string type;        // PORT_SCAN / CONN_FLOOD / UDP_FLOOD
+        std::string src_ip;
+        std::string detail;
+        uint32_t timestamp;
+    };
+
+    // Har packet ke saath call karo
+    void inspect(const FiveTuple& tuple, bool is_udp, uint32_t ts_sec) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::string src = FlowRecord::ipToStr(tuple.src_ip);
+
+        // ----------------------------------------------------------------
+        // 1. PORT SCAN DETECTION
+        // Ek hi source IP alag alag ports pe connect kare = port scan
+        // ----------------------------------------------------------------
+        auto& ports = src_ports_[tuple.src_ip];
+        ports.insert(tuple.dst_port);
+        if (ports.size() == 20 && !alerted_scan_.count(tuple.src_ip)) {
+            alerted_scan_.insert(tuple.src_ip);
+            alerts_.push_back({"PORT_SCAN", src,
+                "Contacted " + std::to_string(ports.size()) + "+ unique ports",
+                ts_sec});
+        }
+
+        // ----------------------------------------------------------------
+        // 2. CONNECTION FLOOD DETECTION (DDoS attempt)
+        // Ek IP se bahut zyaada connections ek second mein
+        // ----------------------------------------------------------------
+        auto& conn = conn_count_[tuple.src_ip];
+        if (conn.window_sec != ts_sec) { conn.window_sec = ts_sec; conn.count = 0; }
+        conn.count++;
+        if (conn.count == 500 && !alerted_flood_.count(tuple.src_ip)) {
+            alerted_flood_.insert(tuple.src_ip);
+            alerts_.push_back({"CONN_FLOOD", src,
+                std::to_string(conn.count) + "+ connections in 1 second",
+                ts_sec});
+        }
+
+        // ----------------------------------------------------------------
+        // 3. UDP FLOOD DETECTION
+        // ----------------------------------------------------------------
+        if (is_udp) {
+            udp_count_[tuple.src_ip]++;
+            if (udp_count_[tuple.src_ip] == 1000 && !alerted_udp_.count(tuple.src_ip)) {
+                alerted_udp_.insert(tuple.src_ip);
+                alerts_.push_back({"UDP_FLOOD", src,
+                    "1000+ UDP packets from this host", ts_sec});
+            }
+        }
+    }
+
+    const std::vector<Alert>& getAlerts() const { return alerts_; }
+
+private:
+    struct ConnWindow { uint32_t window_sec = 0; uint32_t count = 0; };
+
+    mutable std::mutex mutex_;
+    std::unordered_map<uint32_t, std::unordered_set<uint16_t>> src_ports_;
+    std::unordered_map<uint32_t, ConnWindow> conn_count_;
+    std::unordered_map<uint32_t, uint64_t> udp_count_;
+    std::unordered_set<uint32_t> alerted_scan_;
+    std::unordered_set<uint32_t> alerted_flood_;
+    std::unordered_set<uint32_t> alerted_udp_;
+    std::vector<Alert> alerts_;
+};
+
+// Global threat detector
+static ThreatDetector g_threats;
+
+// =============================================================================
 // Statistics (thread-safe)
 // =============================================================================
 struct Stats {
@@ -289,18 +389,33 @@ struct Stats {
     std::atomic<uint64_t> dropped{0};
     std::atomic<uint64_t> tcp_packets{0};
     std::atomic<uint64_t> udp_packets{0};
-    
-    // Per-app stats (protected by mutex)
+
+    // Per-app packet counts
     std::mutex app_mutex;
     std::unordered_map<AppType, uint64_t> app_counts;
+    // Per-app BANDWIDTH (bytes)
+    std::unordered_map<AppType, uint64_t> app_bytes;
     std::unordered_map<std::string, AppType> detected_snis;
-    
-    void recordApp(AppType app, const std::string& sni) {
+    // All flow records (for CSV/JSON export)
+    std::vector<FlowRecord> flow_records;
+
+    void recordApp(AppType app, const std::string& sni, uint64_t bytes) {
         std::lock_guard<std::mutex> lock(app_mutex);
         app_counts[app]++;
-        if (!sni.empty()) {
-            detected_snis[sni] = app;
-        }
+        app_bytes[app] += bytes;
+        if (!sni.empty()) detected_snis[sni] = app;
+    }
+
+    void recordFlow(const FlowRecord& rec) {
+        std::lock_guard<std::mutex> lock(app_mutex);
+        flow_records.push_back(rec);
+    }
+
+    static std::string humanBytes(uint64_t b) {
+        if (b >= 1073741824) return std::to_string(b / 1073741824) + " GB";
+        if (b >= 1048576)    return std::to_string(b / 1048576)    + " MB";
+        if (b >= 1024)       return std::to_string(b / 1024)       + " KB";
+        return std::to_string(b) + " B";
     }
 };
 
@@ -311,6 +426,7 @@ class FastPath {
 public:
     FastPath(int id, Rules* rules, Stats* stats, TSQueue<Packet>* output_queue)
         : id_(id), rules_(rules), stats_(stats), output_queue_(output_queue) {}
+
     
     void start() {
         running_ = true;
@@ -349,25 +465,48 @@ private:
             
             // Get or create flow
             FlowEntry& flow = flows_[pkt.tuple];
-            if (flow.packets == 0) {
-                flow.tuple = pkt.tuple;
+            bool is_new_flow = (flow.packets == 0);
+            if (is_new_flow) {
+                flow.tuple   = pkt.tuple;
+                flow.start_ts = pkt.ts_sec;
             }
             flow.packets++;
             flow.bytes += pkt.data.size();
-            
+
+            // Threat detection — har packet inspect karo
+            bool is_udp = (pkt.tuple.protocol == 17);
+            g_threats.inspect(pkt.tuple, is_udp, pkt.ts_sec);
+
             // Try to classify if not done yet
             if (!flow.classified) {
                 classifyFlow(pkt, flow);
             }
-            
+
             // Check blocking
             if (!flow.blocked) {
                 flow.blocked = rules_->isBlocked(pkt.tuple.src_ip, flow.app_type, flow.sni);
             }
-            
-            // Record stats
-            stats_->recordApp(flow.app_type, flow.sni);
-            
+
+            // Record stats — bandwidth track karo
+            stats_->recordApp(flow.app_type, flow.sni, pkt.data.size());
+
+            // Flow record save karo (har 50 packets pe update karo — har packet nahi)
+            if (flow.packets == 1 || flow.packets % 50 == 0) {
+                FlowRecord rec;
+                rec.src_ip   = FlowRecord::ipToStr(pkt.tuple.src_ip);
+                rec.dst_ip   = FlowRecord::ipToStr(pkt.tuple.dst_ip);
+                rec.src_port = pkt.tuple.src_port;
+                rec.dst_port = pkt.tuple.dst_port;
+                rec.protocol = (pkt.tuple.protocol == 6) ? "TCP" : "UDP";
+                rec.app      = appTypeToString(flow.app_type);
+                rec.domain   = flow.sni;
+                rec.packets  = flow.packets;
+                rec.bytes    = flow.bytes;
+                rec.start_ts = flow.start_ts;
+                rec.status   = flow.blocked ? "BLOCKED" : "FORWARDED";
+                stats_->recordFlow(rec);
+            }
+
             // Forward or drop
             if (flow.blocked) {
                 stats_->dropped++;
@@ -756,9 +895,9 @@ private:
             std::cout << "║   FP" << i << " processed:    " << std::setw(12) << fps_[i]->processed() << "                           ║\n";
         }
         
-        // App distribution
+        // App distribution + bandwidth
         std::cout << "╠══════════════════════════════════════════════════════════════╣\n";
-        std::cout << "║                   APPLICATION BREAKDOWN                       ║\n";
+        std::cout << "║            APPLICATION BREAKDOWN + BANDWIDTH                  ║\n";
         std::cout << "╠══════════════════════════════════════════════════════════════╣\n";
         
         std::lock_guard<std::mutex> lock(stats_.app_mutex);
@@ -773,11 +912,16 @@ private:
             double pct = total > 0 ? (100.0 * count / total) : 0;
             int bar = static_cast<int>(pct / 5);
             std::string bar_str(bar, '#');
-            
-            std::cout << "║ " << std::setw(15) << std::left << appTypeToString(app)
-                      << std::setw(8) << std::right << count
-                      << " " << std::setw(5) << std::fixed << std::setprecision(1) << pct << "% "
-                      << std::setw(20) << std::left << bar_str << "  ║\n";
+            uint64_t bw = 0;
+            auto it = stats_.app_bytes.find(app);
+            if (it != stats_.app_bytes.end()) bw = it->second;
+            std::string bw_str = Stats::humanBytes(bw);
+
+            std::cout << "║ " << std::setw(13) << std::left << appTypeToString(app)
+                      << " " << std::setw(8) << std::right << count
+                      << " " << std::setw(5) << std::fixed << std::setprecision(1) << pct << "%"
+                      << " " << std::setw(8) << std::right << bw_str
+                      << " " << std::setw(14) << std::left << bar_str << " ║\n";
         }
         
         std::cout << "╚══════════════════════════════════════════════════════════════╝\n";
@@ -789,6 +933,136 @@ private:
                 std::cout << "  - " << sni << " -> " << appTypeToString(app) << "\n";
             }
         }
+
+        // Threat detection results
+        const auto& alerts = g_threats.getAlerts();
+        if (!alerts.empty()) {
+            std::cout << "\n╔══════════════════════════════════════════════════════════════╗\n";
+            std::cout << "║                     THREAT ALERTS (" << std::setw(3) << alerts.size() << ")                        ║\n";
+            std::cout << "╠══════════════════════════════════════════════════════════════╣\n";
+            for (const auto& a : alerts) {
+                std::cout << "║ [" << std::setw(11) << std::left << a.type << "] "
+                          << std::setw(16) << a.src_ip << " | "
+                          << std::setw(26) << a.detail.substr(0, 26) << " ║\n";
+            }
+            std::cout << "╚══════════════════════════════════════════════════════════════╝\n";
+        } else {
+            std::cout << "\n[Threat Detection] No threats detected.\n";
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // CSV Export — flow records ko CSV file mein save karo (Excel mein khulega)
+    // -------------------------------------------------------------------------
+public:
+    void exportCSV(const std::string& filename) {
+        std::ofstream f(filename);
+        if (!f.is_open()) {
+            std::cerr << "[Export] Cannot open CSV file: " << filename << "\n";
+            return;
+        }
+        // Header row
+        f << "src_ip,dst_ip,src_port,dst_port,protocol,app,domain,packets,bytes,start_ts,status\n";
+        {
+            std::lock_guard<std::mutex> lock(stats_.app_mutex);
+            for (const auto& r : stats_.flow_records) {
+                // Escape domain for CSV (commas inside domain ko quote karo)
+                std::string domain = r.domain;
+                if (domain.find(',') != std::string::npos)
+                    domain = "\"" + domain + "\"";
+                f << r.src_ip << ","
+                  << r.dst_ip << ","
+                  << r.src_port << ","
+                  << r.dst_port << ","
+                  << r.protocol << ","
+                  << r.app << ","
+                  << domain << ","
+                  << r.packets << ","
+                  << r.bytes << ","
+                  << r.start_ts << ","
+                  << r.status << "\n";
+            }
+        }
+        std::cout << "[Export] CSV written: " << filename
+                  << " (" << stats_.flow_records.size() << " flow records)\n";
+    }
+
+    // -------------------------------------------------------------------------
+    // JSON Export — complete analysis JSON file mein save karo
+    // -------------------------------------------------------------------------
+    void exportJSON(const std::string& filename) {
+        std::ofstream f(filename);
+        if (!f.is_open()) {
+            std::cerr << "[Export] Cannot open JSON file: " << filename << "\n";
+            return;
+        }
+
+        auto esc = [](const std::string& s) -> std::string {
+            std::string out;
+            for (char c : s) {
+                if (c == '"')  out += "\\\"";
+                else if (c == '\\') out += "\\\\";
+                else out += c;
+            }
+            return out;
+        };
+
+        f << "{\n";
+        // Summary
+        f << "  \"summary\": {\n";
+        f << "    \"total_packets\": " << stats_.total_packets.load() << ",\n";
+        f << "    \"total_bytes\": "   << stats_.total_bytes.load()   << ",\n";
+        f << "    \"forwarded\": "     << stats_.forwarded.load()     << ",\n";
+        f << "    \"dropped\": "       << stats_.dropped.load()       << "\n";
+        f << "  },\n";
+
+        // Per-app bandwidth
+        f << "  \"bandwidth\": {\n";
+        {
+            std::lock_guard<std::mutex> lock(stats_.app_mutex);
+            bool first = true;
+            for (const auto& [app, bw] : stats_.app_bytes) {
+                if (!first) f << ",\n";
+                f << "    \"" << esc(appTypeToString(app)) << "\": " << bw;
+                first = false;
+            }
+            f << "\n  },\n";
+
+            // Threat alerts
+            const auto& alerts = g_threats.getAlerts();
+            f << "  \"threat_alerts\": [\n";
+            for (size_t i = 0; i < alerts.size(); i++) {
+                f << "    {\"type\": \"" << esc(alerts[i].type)
+                  << "\", \"src_ip\": \"" << esc(alerts[i].src_ip)
+                  << "\", \"detail\": \"" << esc(alerts[i].detail)
+                  << "\", \"ts\": " << alerts[i].timestamp << "}";
+                if (i + 1 < alerts.size()) f << ",";
+                f << "\n";
+            }
+            f << "  ],\n";
+
+            // Flow records
+            f << "  \"flows\": [\n";
+            for (size_t i = 0; i < stats_.flow_records.size(); i++) {
+                const auto& r = stats_.flow_records[i];
+                f << "    {\"src\": \"" << esc(r.src_ip) << "\""
+                  << ", \"dst\": \""   << esc(r.dst_ip) << "\""
+                  << ", \"sport\": "   << r.src_port
+                  << ", \"dport\": "   << r.dst_port
+                  << ", \"proto\": \"" << esc(r.protocol) << "\""
+                  << ", \"app\": \""   << esc(r.app) << "\""
+                  << ", \"domain\": \"" << esc(r.domain) << "\""
+                  << ", \"pkts\": "    << r.packets
+                  << ", \"bytes\": "   << r.bytes
+                  << ", \"ts\": "      << r.start_ts
+                  << ", \"status\": \"" << esc(r.status) << "\"}";
+                if (i + 1 < stats_.flow_records.size()) f << ",";
+                f << "\n";
+            }
+            f << "  ]\n";
+        }
+        f << "}\n";
+        std::cout << "[Export] JSON written: " << filename << "\n";
     }
 };
 
@@ -797,7 +1071,7 @@ private:
 // =============================================================================
 void printUsage(const char* prog) {
     std::cout << R"(
-DPI Engine v2.0 - Multi-threaded Deep Packet Inspection
+DPI Engine v3.0 - Multi-threaded Deep Packet Inspection
 ========================================================
 
 Usage: )" << prog << R"( <input.pcap> <output.pcap> [options]
@@ -808,9 +1082,11 @@ Options:
   --block-domain <dom>   Block domain (substring match)
   --lbs <n>              Number of load balancer threads (default: 2)
   --fps <n>              FP threads per LB (default: 2)
+  --export-csv <file>    Export flow records to CSV (Excel mein open hoga)
+  --export-json <file>   Export full analysis to JSON
 
 Example:
-  )" << prog << R"( capture.pcap filtered.pcap --block-app YouTube --block-ip 192.168.1.50
+  )" << prog << R"( capture.pcap filtered.pcap --block-app YouTube --export-csv report.csv --export-json report.json
 )";
 }
 
@@ -825,7 +1101,8 @@ int main(int argc, char* argv[]) {
     
     DPIEngine::Config cfg;
     std::vector<std::string> block_ips, block_apps, block_domains;
-    
+    std::string csv_file, json_file;
+
     for (int i = 3; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--block-ip" && i + 1 < argc) block_ips.push_back(argv[++i]);
@@ -833,6 +1110,8 @@ int main(int argc, char* argv[]) {
         else if (arg == "--block-domain" && i + 1 < argc) block_domains.push_back(argv[++i]);
         else if (arg == "--lbs" && i + 1 < argc) cfg.num_lbs = std::stoi(argv[++i]);
         else if (arg == "--fps" && i + 1 < argc) cfg.fps_per_lb = std::stoi(argv[++i]);
+        else if (arg == "--export-csv" && i + 1 < argc) csv_file = argv[++i];
+        else if (arg == "--export-json" && i + 1 < argc) json_file = argv[++i];
     }
     
     DPIEngine engine(cfg);
@@ -844,7 +1123,11 @@ int main(int argc, char* argv[]) {
     if (!engine.process(input, output)) {
         return 1;
     }
-    
+
+    // Export karo agar flags diye hain
+    if (!csv_file.empty())  engine.exportCSV(csv_file);
+    if (!json_file.empty()) engine.exportJSON(json_file);
+
     std::cout << "\nOutput written to: " << output << "\n";
     return 0;
 }
