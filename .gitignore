@@ -1,0 +1,31 @@
+# Ignore compiled binaries
+*.exe
+*.o
+*.out
+dpi_engine
+
+# Output files
+my_output.pcap
+output.pcap
+report.csv
+report.json
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.env
+
+# OS
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+.dockerignore
+
+# Old generated dashboard
+dashboard.html

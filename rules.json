@@ -1,0 +1,10 @@
+{
+  "blocked_apps": [],
+  "blocked_ips": [],
+  "blocked_domains": [],
+  "threat_thresholds": {
+    "port_scan_ports": 20,
+    "conn_flood_per_sec": 500,
+    "udp_flood_packets": 1000
+  }
+}

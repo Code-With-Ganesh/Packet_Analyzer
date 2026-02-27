@@ -1,6 +1,8 @@
-﻿# ⚡ DPI Engine — Deep Packet Inspection System
+﻿# ⚡ DPI Engine — Real-time Deep Packet Inspection System
 
-A **multi-threaded C++ network traffic analyzer** that inspects PCAP files, identifies applications (YouTube, Facebook, Instagram, etc.), detects threats, tracks bandwidth usage, and exports detailed reports.
+A **multi-threaded C++ network traffic analyzer** with a **real-time web dashboard**. Analyzes PCAP files, identifies 20+ applications, detects threats, tracks bandwidth, manages blocking rules dynamically, and deploys to the cloud.
+
+**[Live Dashboard →](http://YOUR_VM_IP:5000)** *(deploy to Oracle Cloud for free always-on hosting)*
 
 ---
 
@@ -8,80 +10,80 @@ A **multi-threaded C++ network traffic analyzer** that inspects PCAP files, iden
 
 | Feature | Description |
 |---------|-------------|
-| **App Detection** | Identifies 20+ apps — YouTube, Facebook, Instagram, Twitter, Netflix, Discord, GitHub, and more |
+| **Real-time Dashboard** | Flask + SocketIO — live charts, rule management, PCAP upload, all from browser |
+| **App Detection** | Identifies 20+ apps — YouTube, Facebook, Instagram, Twitter, Netflix, Discord, GitHub, etc. |
 | **TLS SNI Extraction** | Reads domain names from HTTPS handshakes (even in encrypted traffic) |
 | **QUIC Detection** | Detects YouTube/Google traffic over UDP port 443 |
 | **DNS Correlation** | Builds IP→domain map from DNS responses for accurate identification |
 | **Bandwidth Monitor** | Tracks how many MB each app consumed |
-| **GeoIP Detection** | Identifies the country of each connection (India, USA, Europe, etc.) |
+| **GeoIP Detection** | Identifies country of each connection (India, USA, Europe, etc.) |
 | **Threat Detection** | Detects Port Scans, Connection Floods (DDoS), UDP Floods |
-| **CSV Export** | Full flow table — open in Excel for analysis |
-| **JSON Export** | Complete report — parse with Python |
-| **Web Dashboard** | Beautiful browser-based charts (no server needed) |
-| **App Blocking** | Block specific apps or IPs — blocked packets are dropped from output |
+| **Dynamic Rules** | Add/remove blocking rules from browser — no recompile needed |
+| **PCAP Upload** | Upload new .pcap files directly from the dashboard |
+| **CSV/JSON Export** | Full flow table for Excel or programmatic analysis |
+| **App Blocking** | Block specific apps, IPs, or domains — blocked packets dropped from output |
 | **Multi-threaded** | Load Balancers + Fast Path workers for high performance |
+| **Cloud Deployable** | Dockerfile + Oracle Cloud deploy script included |
 
 ---
 
-## 📊 Sample Output
+## 📸 Dashboard
 
-```
-╔══════════════════════════════════════════════════════════════╗
-║            APPLICATION BREAKDOWN + BANDWIDTH                  ║
-╠══════════════════════════════════════════════════════════════╣
-║ Facebook       16896  38.1%   17 MB  #######        ║
-║ Google         14712  33.2%   11 MB  ######         ║
-║ Twitter/X       5710  12.9%    5 MB  ##             ║
-║ YouTube          822   1.9%  787 KB                 ║
-║ GitHub           331   0.7%  264 KB                 ║
-╚══════════════════════════════════════════════════════════════╝
-
-╔══════════════════════════════════════════════════════════════╗
-║                     THREAT ALERTS (14)                        ║
-╠══════════════════════════════════════════════════════════════╣
-║ [PORT_SCAN  ] 192.168.3.8     | Contacted 20+ unique ports  ║
-║ [UDP_FLOOD  ] 192.168.51.232  | 1000+ UDP packets from host ║
-║ [CONN_FLOOD ] 116.119.101.15  | 500+ connections in 1 second║
-╚══════════════════════════════════════════════════════════════╝
-
-[Export] CSV written: report.csv (1741 flow records)
-[Export] JSON written: report.json
-```
+The real-time dashboard includes:
+- **Control Panel** — Select PCAP file, upload new ones, trigger analysis
+- **Live Stats** — Total packets, bytes, forwarded, blocked, threats, flows
+- **App Distribution** — Interactive pie chart (by bandwidth)
+- **Bandwidth Chart** — Horizontal bar chart per application
+- **Dynamic Rules** — Add/remove blocked apps, IPs, domains with click
+- **Threat Alerts** — PORT_SCAN, CONN_FLOOD, UDP_FLOOD with details
+- **Flow Table** — Searchable, sortable, paginated flow records with GeoIP
 
 ---
 
-## 🛠️ Build
+## 🛠️ Quick Start (Local)
 
-**Requirements:** g++ with C++17 support (Windows: MSYS2/MinGW, Linux/Mac: built-in)
+### 1. Compile C++ Engine
+
+**Requirements:** g++ with C++17 support
 
 ```bash
-g++ -std=c++17 -O2 -I include -o dpi_engine.exe \
-    src/dpi_mt.cpp \
-    src/pcap_reader.cpp \
-    src/packet_parser.cpp \
-    src/sni_extractor.cpp \
-    src/types.cpp
+# Windows (MSYS2/MinGW)
+g++ -std=c++17 -O2 -I include -o dpi_engine.exe src/dpi_mt.cpp src/pcap_reader.cpp src/packet_parser.cpp src/sni_extractor.cpp src/types.cpp
+
+# Linux/Mac
+g++ -std=c++17 -O2 -I include -o dpi_engine src/dpi_mt.cpp src/pcap_reader.cpp src/packet_parser.cpp src/sni_extractor.cpp src/types.cpp
 ```
+
+### 2. Install Python Dependencies
+
+```bash
+pip install flask flask-socketio
+```
+
+### 3. Start Dashboard Server
+
+```bash
+python server.py
+```
+
+Open **http://localhost:5000** in browser → Select PCAP → Click Analyze.
 
 ---
 
-## ▶️ Usage
+## ▶️ CLI Usage
 
 ```bash
 # Basic analysis
-.\dpi_engine.exe input.pcap output.pcap
+./dpi_engine input.pcap output.pcap
 
 # With CSV + JSON export
-.\dpi_engine.exe input.pcap output.pcap --export-csv report.csv --export-json report.json
+./dpi_engine input.pcap output.pcap --export-csv report.csv --export-json report.json
 
 # Block specific apps
-.\dpi_engine.exe input.pcap output.pcap --block-app YouTube --block-app Instagram
-
-# Block an IP address
-.\dpi_engine.exe input.pcap output.pcap --block-ip 192.168.1.50
+./dpi_engine input.pcap output.pcap --block-app YouTube --block-app Instagram
 
 # All options combined
-.\dpi_engine.exe input.pcap output.pcap --block-app YouTube --export-csv report.csv --export-json report.json
+./dpi_engine input.pcap output.pcap --block-app YouTube --export-csv report.csv --export-json report.json
 ```
 
 ### All Flags
@@ -90,64 +92,122 @@ g++ -std=c++17 -O2 -I include -o dpi_engine.exe \
 |------|-------------|---------|
 | `--block-app <name>` | Block an application | `--block-app YouTube` |
 | `--block-ip <ip>` | Block a source IP | `--block-ip 192.168.1.50` |
-| `--block-domain <str>` | Block domains containing substring | `--block-domain tiktok` |
+| `--block-domain <str>` | Block domains (substring match) | `--block-domain tiktok` |
 | `--export-csv <file>` | Export flows to CSV | `--export-csv report.csv` |
 | `--export-json <file>` | Export full report to JSON | `--export-json report.json` |
-| `--lbs <n>` | Number of Load Balancer threads | `--lbs 2` |
+| `--lbs <n>` | Load Balancer threads | `--lbs 2` |
 | `--fps <n>` | Fast Path threads per LB | `--fps 4` |
 
-**Supported app names:** `YouTube` `Facebook` `Instagram` `Twitter` `Google` `Netflix` `Amazon` `Microsoft` `Apple` `WhatsApp` `Telegram` `TikTok` `Spotify` `Zoom` `Discord` `GitHub` `Cloudflare`
+---
+
+## 🌐 REST API
+
+When the dashboard server is running, these API endpoints are available:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/stats` | GET | Summary statistics |
+| `/api/flows?page=1&search=youtube` | GET | Paginated flow records with search |
+| `/api/threats` | GET | All threat alerts |
+| `/api/bandwidth` | GET | Bandwidth per application |
+| `/api/rules` | GET | Current blocking rules |
+| `/api/rules` | POST | Add/remove rules: `{"add_app":"YouTube"}` or `{"remove_app":"YouTube"}` |
+| `/api/pcap-files` | GET | List available PCAP files |
+| `/api/upload-pcap` | POST | Upload a new PCAP file (multipart/form-data) |
+| `/api/analyze` | POST | Trigger analysis: `{"pcap_file":"include/MY_Traffic.pcap"}` |
 
 ---
 
-## 📈 Web Dashboard
+## ☁️ Deploy to Oracle Cloud (FREE — Always On)
 
-After exporting JSON, generate a browser-based dashboard:
+Oracle Cloud Free Tier gives you a **full VM** (4 ARM CPUs, 24GB RAM, 200GB storage) **forever free**.
+
+### Step 1: Create Oracle Cloud Account
+
+1. Go to [cloud.oracle.com](https://cloud.oracle.com) → Sign up (no credit card required for free tier)
+2. Choose your home region (Mumbai recommended for India)
+
+### Step 2: Create Always Free VM
+
+1. **Compute → Instances → Create Instance**
+2. Image: **Ubuntu 22.04** (Canonical)
+3. Shape: **VM.Standard.A1.Flex** (Always Free — 4 OCPUs, 24GB RAM)
+4. Add your SSH public key
+5. Click **Create**
+
+### Step 3: Open Port 5000
+
+1. **Networking → Virtual Cloud Networks → Your VCN → Security Lists**
+2. Add Ingress Rule:
+   - Source CIDR: `0.0.0.0/0`
+   - Destination Port: `5000`
+   - Protocol: TCP
+
+### Step 4: Deploy
 
 ```bash
-python dashboard.py report.json
+# SSH into your VM
+ssh ubuntu@YOUR_VM_IP
+
+# Download and run deploy script
+git clone https://github.com/Code-With-Ganesh/Packet_Analyzer.git
+cd Packet_Analyzer/Packet_analyzer
+chmod +x deploy.sh
+./deploy.sh
 ```
 
-Opens `dashboard.html` — double-click to view in browser. Shows:
-- App distribution pie chart
-- Bandwidth bar chart per app
-- Threat alerts section
-- Top 50 flows table (sorted by bytes)
+### Step 5: Access Dashboard
 
----
+Open **http://YOUR_VM_IP:5000** — it's live!
 
-## 📁 CSV Export Format
+The server:
+- ✅ Auto-restarts on crash (systemd)
+- ✅ Auto-starts on VM reboot
+- ✅ Never sleeps (unlike Streamlit/Heroku)
+- ✅ FREE forever (Oracle Cloud Always Free)
 
+### Docker Deploy (Alternative)
+
+```bash
+docker build -t dpi-engine .
+docker run -d --name dpi -p 5000:5000 --restart always dpi-engine
 ```
-src_ip, dst_ip, src_port, dst_port, protocol, app, domain, packets, bytes, start_ts, status, country
-192.168.51.232, 157.240.1.35, 52301, 443, UDP, Facebook, star.c10r.facebook.com, 150, 189540, ..., FORWARDED, USA
-192.168.51.232, 74.125.68.119, 53012, 443, UDP, YouTube, i.ytimg.com, 50, 56413, ..., BLOCKED, USA
-```
-
-Open in Excel → Insert → PivotChart for instant graphs.
 
 ---
 
 ## 🏗️ Architecture
 
 ```
-PCAP File
-    │
-    ▼
-[Reader Thread] ──hash──► [LB0] ──hash──► [FP0] [FP1]
-                    │
-                    └──hash──► [LB1] ──hash──► [FP2] [FP3]
-                                                    │
-                                              [Output Queue]
-                                                    │
-                                           [Writer Thread] ──► output.pcap
+┌─────────────────────────────────────────────────────────┐
+│                    Browser Dashboard                     │
+│  (Charts, Rules, Flow Table, PCAP Upload, Search)       │
+└────────────────────────┬────────────────────────────────┘
+                         │ WebSocket + REST API
+┌────────────────────────┴────────────────────────────────┐
+│              Flask + SocketIO Server (Python)            │
+│  /api/stats  /api/flows  /api/rules  /api/analyze       │
+└────────────────────────┬────────────────────────────────┘
+                         │ subprocess
+┌────────────────────────┴────────────────────────────────┐
+│              DPI Engine (C++17 Multi-threaded)           │
+│                                                          │
+│  PCAP File                                               │
+│      │                                                   │
+│      ▼                                                   │
+│  [Reader] ──► [LB0] ──► [FP0] [FP1]                    │
+│          │                                               │
+│          └──► [LB1] ──► [FP2] [FP3]                    │
+│                              │                           │
+│                        [Output Queue]                    │
+│                              │                           │
+│                    [Writer] ──► output.pcap              │
+│                              └──► report.json            │
+└──────────────────────────────────────────────────────────┘
 ```
-
-**Consistent hashing** ensures all packets of the same connection always route to the same FP thread — required for correct stateful flow tracking.
 
 ---
 
-## 🔍 App Detection Pipeline (8 Steps)
+## 🔍 Detection Pipeline (8 Steps)
 
 | Step | Method | Traffic Type |
 |------|--------|-------------|
@@ -174,7 +234,7 @@ PCAP File
 
 ## 🌍 GeoIP
 
-Countries detected: `India`, `USA`, `UK`, `Germany`, `France`, `China`, `Japan`, `South Korea`, `Singapore`, `Europe`, `LAN` (private), `Localhost`
+Countries detected: India, USA, UK, Germany, France, China, Japan, South Korea, Singapore, Europe, LAN (private), Localhost
 
 ---
 
@@ -183,27 +243,33 @@ Countries detected: `India`, `USA`, `UK`, `Germany`, `France`, `China`, `Japan`,
 ```
 Packet_analyzer/
 ├── src/
-│   ├── dpi_mt.cpp          ← Main engine (all DPI logic)
+│   ├── dpi_mt.cpp          ← Main DPI engine (multi-threaded)
 │   ├── types.cpp           ← App detection + GeoIP + IP range maps
 │   ├── pcap_reader.cpp     ← PCAP file I/O
 │   ├── packet_parser.cpp   ← Ethernet/IP/TCP/UDP parsing
 │   └── sni_extractor.cpp   ← TLS SNI + HTTP Host extraction
-├── include/
-│   ├── types.h             ← FiveTuple, AppType enum, declarations
-│   └── ...
-├── dashboard.py            ← Web dashboard generator (Python 3, no pip needed)
-├── report.csv              ← Generated flow export
-└── report.json             ← Generated full report
+├── include/                ← Header files + PCAP samples
+├── templates/
+│   └── index.html          ← Real-time dashboard (Jinja2 template)
+├── server.py               ← Flask + SocketIO backend
+├── dashboard.py            ← Static dashboard generator
+├── rules.json              ← Dynamic blocking rules
+├── requirements.txt        ← Python dependencies
+├── Dockerfile              ← Docker multi-stage build
+├── deploy.sh               ← Oracle Cloud one-click deploy
+└── README.md
 ```
 
 ---
 
 ## 💡 Tech Stack
 
-- **C++17** — Engine, multithreading (`std::thread`, `std::mutex`, `std::atomic`)
-- **Python 3** — Dashboard generator (stdlib only, no pip needed)
-- **Chart.js** (CDN) — Dashboard charts
-- **PCAP** — Standard Wireshark-compatible capture format
+- **C++17** — DPI Engine, multithreading (`std::thread`, `std::mutex`, `std::atomic`)
+- **Python 3 + Flask** — REST API + WebSocket server
+- **Socket.IO** — Real-time browser updates
+- **Chart.js** (CDN) — Interactive charts
+- **Docker** — Containerized deployment
+- **Oracle Cloud** — Free always-on hosting
 
 ---
 

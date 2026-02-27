@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DPI Engine — Control Center</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<style>
+/* ================================================================ */
+/* Reset & Base                                                      */
+/* ================================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', -apple-system, Arial, sans-serif; background: #0a0d12; color: #e0e0e0; min-height: 100vh; }
+a { color: #3a7bd5; text-decoration: none; }
+a:hover { text-decoration: underline; }
+::selection { background: #3a7bd5; color: #fff; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #1a1f2e; }
+::-webkit-scrollbar-thumb { background: #3a4a6b; border-radius: 4px; }
+
+/* ================================================================ */
+/* Header                                                            */
+/* ================================================================ */
+header {
+  background: linear-gradient(135deg, #0d1b2a 0%, #1b2840 100%);
+  padding: 18px 32px;
+  border-bottom: 2px solid #3a7bd5;
+  display: flex; justify-content: space-between; align-items: center;
+}
+header .brand { display: flex; align-items: center; gap: 14px; }
+header h1 { font-size: 22px; color: #fff; letter-spacing: 0.5px; }
+header h1 span { color: #3a7bd5; }
+header .subtitle { color: #666; font-size: 12px; margin-top: 2px; }
+.conn-status {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 13px; color: #888;
+}
+.dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  display: inline-block; animation: pulse 2s infinite;
+}
+.dot-connected { background: #59a14f; box-shadow: 0 0 8px #59a14f; }
+.dot-disconnected { background: #e15759; box-shadow: 0 0 8px #e15759; animation: none; }
+.dot-analyzing { background: #f28e2b; box-shadow: 0 0 8px #f28e2b; animation: pulse 0.5s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+/* ================================================================ */
+/* Container                                                         */
+/* ================================================================ */
+.container { max-width: 1500px; margin: 0 auto; padding: 20px 24px; }
+
+/* ================================================================ */
+/* Control Panel                                                     */
+/* ================================================================ */
+.control-panel {
+  background: linear-gradient(135deg, #141926, #1a2235);
+  border: 1px solid #2a3348; border-radius: 14px;
+  padding: 20px 24px; margin-bottom: 20px;
+  display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+}
+.control-panel label { font-size: 13px; color: #888; margin-right: 4px; }
+.pcap-select {
+  background: #0d1117; border: 1px solid #30394a; border-radius: 8px;
+  color: #fff; padding: 10px 14px; font-size: 14px;
+  min-width: 300px; cursor: pointer;
+}
+.pcap-select option { background: #0d1117; color: #e0e0e0; }
+.btn {
+  padding: 10px 22px; border: none; border-radius: 8px;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-primary { background: linear-gradient(135deg, #3a7bd5, #2b5eb5); color: #fff; }
+.btn-primary:hover { background: linear-gradient(135deg, #4a8be5, #3a6ec5); transform: translateY(-1px); }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+.btn-danger { background: linear-gradient(135deg, #e15759, #c14446); color: #fff; }
+.btn-danger:hover { background: linear-gradient(135deg, #f16769, #d15456); }
+.btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 6px; }
+.btn-xs { padding: 3px 8px; font-size: 11px; border-radius: 4px; }
+.analysis-status {
+  font-size: 13px; color: #888; margin-left: auto;
+  display: flex; align-items: center; gap: 8px;
+}
+.spinner {
+  width: 18px; height: 18px; border: 2px solid #3a7bd5;
+  border-top-color: transparent; border-radius: 50%;
+  animation: spin 0.8s linear infinite; display: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ================================================================ */
+/* Stats Cards Grid                                                  */
+/* ================================================================ */
+.stats-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px; margin-bottom: 20px;
+}
+.stat-card {
+  background: #141926; border-radius: 12px; padding: 18px 20px;
+  border-left: 4px solid #3a7bd5; transition: transform 0.2s;
+}
+.stat-card:hover { transform: translateY(-2px); }
+.stat-card .label { font-size: 11px; color: #666; text-transform: uppercase; letter-spacing: 1.2px; }
+.stat-card .value { font-size: 26px; font-weight: 700; color: #fff; margin-top: 4px; transition: all 0.3s; }
+.stat-card .sub { font-size: 11px; color: #3a7bd5; margin-top: 2px; }
+.stat-card.green { border-left-color: #59a14f; }
+.stat-card.green .value { color: #59a14f; }
+.stat-card.red { border-left-color: #e15759; }
+.stat-card.red .value { color: #e15759; }
+.stat-card.orange { border-left-color: #f28e2b; }
+.stat-card.orange .value { color: #f28e2b; }
+.stat-card.purple { border-left-color: #b07aa1; }
+.stat-card.purple .value { color: #b07aa1; }
+
+/* ================================================================ */
+/* Charts Grid                                                       */
+/* ================================================================ */
+.charts-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px;
+}
+.chart-card {
+  background: #141926; border-radius: 12px; padding: 20px;
+  border: 1px solid #1e2738;
+}
+.chart-card h3 {
+  font-size: 14px; color: #888; margin-bottom: 14px;
+  padding-bottom: 10px; border-bottom: 1px solid #1e2738;
+}
+
+/* ================================================================ */
+/* Rules Panel                                                       */
+/* ================================================================ */
+.rules-panel {
+  background: #141926; border-radius: 14px; padding: 22px;
+  margin-bottom: 20px; border: 1px solid #1e2738;
+}
+.rules-panel h3 {
+  font-size: 16px; color: #3a7bd5; margin-bottom: 16px;
+  padding-bottom: 10px; border-bottom: 1px solid #1e2738;
+}
+.rules-sections {
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px;
+}
+.rule-group h4 { font-size: 13px; color: #888; margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+.tags-container { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; min-height: 32px; }
+.tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #1e2b3e; border: 1px solid #2a3d55; border-radius: 20px;
+  padding: 5px 12px; font-size: 12px; color: #e0e0e0;
+}
+.tag .remove {
+  cursor: pointer; color: #e15759; font-weight: 700;
+  font-size: 14px; line-height: 1; opacity: 0.7;
+}
+.tag .remove:hover { opacity: 1; }
+.tag-empty { color: #555; font-size: 12px; font-style: italic; padding: 5px 0; }
+.rule-input-row { display: flex; gap: 6px; }
+.rule-input {
+  background: #0d1117; border: 1px solid #30394a; border-radius: 6px;
+  color: #e0e0e0; padding: 6px 10px; font-size: 13px; flex: 1;
+}
+.rule-input:focus { outline: none; border-color: #3a7bd5; }
+
+/* ================================================================ */
+/* Threats Section                                                   */
+/* ================================================================ */
+.threats-section {
+  background: #141926; border-radius: 14px; padding: 22px;
+  margin-bottom: 20px; border-left: 4px solid #e15759;
+}
+.threats-section h3 { color: #e15759; margin-bottom: 14px; font-size: 16px; }
+.threats-empty { color: #555; font-style: italic; padding: 10px 0; }
+.threat-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 0; border-bottom: 1px solid #1e2738;
+}
+.threat-item:last-child { border-bottom: none; }
+.badge {
+  padding: 4px 10px; border-radius: 20px;
+  font-size: 10px; font-weight: 700; letter-spacing: 1px; white-space: nowrap;
+}
+.badge-PORT_SCAN { background: #e1575920; color: #e15759; border: 1px solid #e15759; }
+.badge-CONN_FLOOD { background: #f28e2b20; color: #f28e2b; border: 1px solid #f28e2b; }
+.badge-UDP_FLOOD { background: #edc94820; color: #edc948; border: 1px solid #edc948; }
+.threat-ip { color: #fff; font-size: 13px; font-family: monospace; min-width: 120px; }
+.threat-detail { color: #888; font-size: 13px; }
+
+/* ================================================================ */
+/* Flows Table                                                       */
+/* ================================================================ */
+.flows-section {
+  background: #141926; border-radius: 14px; padding: 22px;
+  border: 1px solid #1e2738;
+}
+.flows-section h3 { font-size: 16px; color: #888; margin-bottom: 14px; }
+.flows-toolbar {
+  display: flex; gap: 12px; align-items: center; margin-bottom: 14px; flex-wrap: wrap;
+}
+.search-input {
+  background: #0d1117; border: 1px solid #30394a; border-radius: 8px;
+  color: #e0e0e0; padding: 8px 14px; font-size: 13px; width: 280px;
+}
+.search-input:focus { outline: none; border-color: #3a7bd5; }
+.flows-count { font-size: 12px; color: #666; margin-left: auto; }
+.flows-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.flows-table th {
+  background: #0d1117; color: #3a7bd5; padding: 10px 12px;
+  text-align: left; font-weight: 600; cursor: pointer;
+  position: sticky; top: 0; z-index: 1;
+}
+.flows-table th:hover { color: #5a9bf5; }
+.flows-table td {
+  padding: 8px 12px; border-bottom: 1px solid #1a2030; color: #ccc;
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.flows-table tr:hover td { background: #1a2236; }
+.status-FORWARDED { color: #59a14f; font-weight: 600; }
+.status-BLOCKED { color: #e15759; font-weight: 600; }
+.flows-table-wrap { max-height: 500px; overflow-y: auto; overflow-x: auto; }
+
+.pagination {
+  display: flex; justify-content: center; gap: 6px; margin-top: 14px;
+}
+.page-btn {
+  background: #1e2738; border: 1px solid #2a3d55; border-radius: 6px;
+  color: #ccc; padding: 6px 12px; font-size: 12px; cursor: pointer;
+}
+.page-btn:hover { background: #2a3d55; }
+.page-btn.active { background: #3a7bd5; border-color: #3a7bd5; color: #fff; }
+
+/* ================================================================ */
+/* Toast Notifications                                               */
+/* ================================================================ */
+.toast-container { position: fixed; top: 20px; right: 20px; z-index: 1000; }
+.toast {
+  background: #1e2738; border: 1px solid #2a3d55; border-radius: 10px;
+  padding: 14px 20px; margin-bottom: 10px; min-width: 280px;
+  animation: slideIn 0.3s ease; box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+}
+.toast-success { border-left: 4px solid #59a14f; }
+.toast-error { border-left: 4px solid #e15759; }
+.toast-info { border-left: 4px solid #3a7bd5; }
+.toast .title { font-size: 13px; font-weight: 600; color: #fff; }
+.toast .msg { font-size: 12px; color: #888; margin-top: 4px; }
+@keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+/* ================================================================ */
+/* Console Log Panel                                                 */
+/* ================================================================ */
+.console-panel {
+  background: #0a0d12; border: 1px solid #1e2738; border-radius: 14px;
+  padding: 16px; margin-top: 20px; max-height: 200px; overflow-y: auto;
+  font-family: 'Consolas', 'Courier New', monospace; font-size: 12px;
+  color: #59a14f; display: none;
+}
+.console-panel.active { display: block; }
+.console-line { padding: 2px 0; white-space: pre-wrap; word-break: break-all; }
+.console-line.error { color: #e15759; }
+
+/* ================================================================ */
+/* Responsive                                                        */
+/* ================================================================ */
+@media (max-width: 1100px) {
+  .charts-grid { grid-template-columns: 1fr; }
+  .rules-sections { grid-template-columns: 1fr; }
+}
+@media (max-width: 700px) {
+  header { flex-direction: column; gap: 10px; }
+  .control-panel { flex-direction: column; }
+  .pcap-select { min-width: 100%; }
+  .stats-grid { grid-template-columns: 1fr 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- ================================================================ -->
+<!-- HEADER                                                           -->
+<!-- ================================================================ -->
+<header>
+  <div class="brand">
+    <div>
+      <h1>⚡ DPI Engine — <span>Control Center</span></h1>
+      <div class="subtitle">Real-time Deep Packet Inspection Dashboard</div>
+    </div>
+  </div>
+  <div class="conn-status">
+    <span class="dot dot-connected" id="statusDot"></span>
+    <span id="statusText">Connecting...</span>
+  </div>
+</header>
+
+<!-- ================================================================ -->
+<!-- MAIN CONTENT                                                     -->
+<!-- ================================================================ -->
+<div class="container">
+
+  <!-- ============================================================ -->
+  <!-- Control Panel                                                 -->
+  <!-- ============================================================ -->
+  <div class="control-panel">
+    <label>📁 PCAP File:</label>
+    <select class="pcap-select" id="pcapSelect">
+      <option value="">Loading PCAP files...</option>
+    </select>
+    <button class="btn btn-primary" id="analyzeBtn" onclick="runAnalysis()">
+      🔍 Analyze
+    </button>
+    <button class="btn btn-sm" style="background:#1e2738;color:#888;border:1px solid #30394a" onclick="document.getElementById('pcapUpload').click()">
+      📤 Upload PCAP
+    </button>
+    <input type="file" id="pcapUpload" accept=".pcap,.pcapng" style="display:none" onchange="uploadPcap(this)">
+    <button class="btn btn-sm" style="background:#1e2738;color:#888;border:1px solid #30394a" onclick="toggleConsole()">
+      📋 Console
+    </button>
+    <div class="analysis-status">
+      <div class="spinner" id="spinner"></div>
+      <span id="analysisMsg"></span>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Stats Cards                                                   -->
+  <!-- ============================================================ -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="label">Total Packets</div>
+      <div class="value" id="statPackets">—</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Total Data</div>
+      <div class="value" id="statBytes">—</div>
+    </div>
+    <div class="stat-card green">
+      <div class="label">Forwarded</div>
+      <div class="value" id="statForwarded">—</div>
+    </div>
+    <div class="stat-card red">
+      <div class="label">Blocked</div>
+      <div class="value" id="statDropped">—</div>
+    </div>
+    <div class="stat-card orange">
+      <div class="label">Threat Alerts</div>
+      <div class="value" id="statThreats">—</div>
+    </div>
+    <div class="stat-card purple">
+      <div class="label">Unique Flows</div>
+      <div class="value" id="statFlows">—</div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Charts                                                        -->
+  <!-- ============================================================ -->
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3>📱 Application Distribution</h3>
+      <canvas id="appPie" height="280"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3>📶 Bandwidth per Application</h3>
+      <canvas id="bwBar" height="280"></canvas>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Dynamic Rules                                                 -->
+  <!-- ============================================================ -->
+  <div class="rules-panel">
+    <h3>⚙ Dynamic Rules <span style="font-size:12px;color:#555;font-weight:400">(changes apply on next analysis)</span></h3>
+    <div class="rules-sections">
+      <!-- Blocked Apps -->
+      <div class="rule-group">
+        <h4>🚫 Blocked Apps</h4>
+        <div class="tags-container" id="blockedAppsTags"></div>
+        <div class="rule-input-row">
+          <select class="rule-input" id="newAppInput">
+            <option value="">Select app...</option>
+            <option>YouTube</option>
+            <option>Facebook</option>
+            <option>Instagram</option>
+            <option>Twitter</option>
+            <option>Netflix</option>
+            <option>TikTok</option>
+            <option>WhatsApp</option>
+            <option>Telegram</option>
+            <option>Spotify</option>
+            <option>Zoom</option>
+            <option>Discord</option>
+            <option>Google</option>
+            <option>Amazon</option>
+            <option>Microsoft</option>
+            <option>GitHub</option>
+            <option>Cloudflare</option>
+          </select>
+          <button class="btn btn-primary btn-sm" onclick="addRule('app')">+ Add</button>
+        </div>
+      </div>
+
+      <!-- Blocked IPs -->
+      <div class="rule-group">
+        <h4>🛑 Blocked IPs</h4>
+        <div class="tags-container" id="blockedIPsTags"></div>
+        <div class="rule-input-row">
+          <input class="rule-input" id="newIPInput" placeholder="e.g. 142.250.193.100">
+          <button class="btn btn-primary btn-sm" onclick="addRule('ip')">+ Add</button>
+        </div>
+      </div>
+
+      <!-- Blocked Domains -->
+      <div class="rule-group">
+        <h4>🌐 Blocked Domains</h4>
+        <div class="tags-container" id="blockedDomainsTags"></div>
+        <div class="rule-input-row">
+          <input class="rule-input" id="newDomainInput" placeholder="e.g. malware.com">
+          <button class="btn btn-primary btn-sm" onclick="addRule('domain')">+ Add</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Threat Alerts                                                 -->
+  <!-- ============================================================ -->
+  <div class="threats-section">
+    <h3>🚨 Threat Alerts (<span id="threatCount">0</span>)</h3>
+    <div id="threatsList">
+      <div class="threats-empty">No threats detected yet. Run an analysis to see results.</div>
+    </div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Flow Records Table                                            -->
+  <!-- ============================================================ -->
+  <div class="flows-section">
+    <h3>🔍 Flow Records</h3>
+    <div class="flows-toolbar">
+      <input class="search-input" id="flowSearch" placeholder="Search flows... (app, IP, domain, country)" oninput="searchFlows()">
+      <button class="btn btn-sm" style="background:#1e2738;color:#ccc;border:1px solid #30394a" onclick="loadFlows(1)">↻ Refresh</button>
+      <span class="flows-count" id="flowsCount"></span>
+    </div>
+    <div class="flows-table-wrap">
+      <table class="flows-table">
+        <thead>
+          <tr>
+            <th onclick="sortFlows('src')">Source IP</th>
+            <th onclick="sortFlows('dst')">Dest IP</th>
+            <th onclick="sortFlows('proto')">Proto</th>
+            <th onclick="sortFlows('app')">App</th>
+            <th onclick="sortFlows('domain')">Domain</th>
+            <th onclick="sortFlows('pkts')">Packets</th>
+            <th onclick="sortFlows('bytes')">Bytes</th>
+            <th onclick="sortFlows('status')">Status</th>
+            <th onclick="sortFlows('country')">Country</th>
+          </tr>
+        </thead>
+        <tbody id="flowsBody">
+          <tr><td colspan="9" style="text-align:center;color:#555;padding:30px">No data. Run an analysis first.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pagination" id="pagination"></div>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- Console Log                                                   -->
+  <!-- ============================================================ -->
+  <div class="console-panel" id="consolePanel"></div>
+
+</div>
+
+<!-- Toast Container -->
+<div class="toast-container" id="toastContainer"></div>
+
+<!-- ================================================================ -->
+<!-- JAVASCRIPT                                                       -->
+<!-- ================================================================ -->
+<script>
+// ================================================================
+// State
+// ================================================================
+let socket = null;
+let appChart = null;
+let bwChart = null;
+let currentReport = null;
+let currentRules = null;
+let currentPage = 1;
+let searchTimeout = null;
+let currentSort = { field: 'bytes', order: 'desc' };
+
+const COLORS = [
+  '#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f',
+  '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac',
+  '#d37295', '#fabfd2', '#8cd17d', '#86bcb6', '#a0cbe8'
+];
+
+// ================================================================
+// Helpers
+// ================================================================
+function humanBytes(b) {
+  if (!b || b === 0) return '0 B';
+  if (b >= 1073741824) return (b / 1073741824).toFixed(1) + ' GB';
+  if (b >= 1048576) return (b / 1048576).toFixed(1) + ' MB';
+  if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+  return b + ' B';
+}
+
+function formatNum(n) {
+  if (n === undefined || n === null) return '—';
+  return n.toLocaleString();
+}
+
+function showToast(title, msg, type = 'info') {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `<div class="title">${title}</div><div class="msg">${msg}</div>`;
+  container.appendChild(toast);
+  setTimeout(() => toast.remove(), 5000);
+}
+
+function log(msg, isError = false) {
+  const panel = document.getElementById('consolePanel');
+  const line = document.createElement('div');
+  line.className = 'console-line' + (isError ? ' error' : '');
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  panel.appendChild(line);
+  panel.scrollTop = panel.scrollHeight;
+}
+
+function toggleConsole() {
+  document.getElementById('consolePanel').classList.toggle('active');
+}
+
+// ================================================================
+// WebSocket Connection
+// ================================================================
+function connectSocket() {
+  socket = io();
+
+  socket.on('connect', () => {
+    document.getElementById('statusDot').className = 'dot dot-connected';
+    document.getElementById('statusText').textContent = 'Connected';
+    log('WebSocket connected to server');
+  });
+
+  socket.on('disconnect', () => {
+    document.getElementById('statusDot').className = 'dot dot-disconnected';
+    document.getElementById('statusText').textContent = 'Disconnected';
+    log('WebSocket disconnected', true);
+  });
+
+  socket.on('initial_data', (data) => {
+    log('Received initial data from server');
+    if (data.report) {
+      currentReport = data.report;
+      updateDashboard(data.report);
+    }
+    if (data.rules) {
+      currentRules = data.rules;
+      updateRulesDisplay(data.rules);
+    }
+    if (data.pcap_files) {
+      updatePcapSelect(data.pcap_files);
+    }
+    if (!data.engine_exists) {
+      showToast('Warning', 'DPI engine not compiled! Compile first.', 'error');
+    }
+  });
+
+  socket.on('data_update', (report) => {
+    if (report) {
+      log('Data updated');
+      currentReport = report;
+      updateDashboard(report);
+    }
+  });
+
+  socket.on('analysis_started', (data) => {
+    document.getElementById('spinner').style.display = 'block';
+    document.getElementById('analyzeBtn').disabled = true;
+    document.getElementById('statusDot').className = 'dot dot-analyzing';
+    document.getElementById('statusText').textContent = 'Analyzing...';
+    document.getElementById('analysisMsg').textContent = `Analyzing ${data.pcap}...`;
+    log(`Analysis started: ${data.pcap}`);
+    showToast('Analysis Started', `Processing ${data.pcap}...`, 'info');
+  });
+
+  socket.on('analysis_complete', (data) => {
+    document.getElementById('spinner').style.display = 'none';
+    document.getElementById('analyzeBtn').disabled = false;
+    document.getElementById('statusDot').className = 'dot dot-connected';
+    document.getElementById('statusText').textContent = 'Connected';
+
+    if (data.success) {
+      document.getElementById('analysisMsg').textContent = `Done in ${data.elapsed}`;
+      if (data.report) {
+        currentReport = data.report;
+        updateDashboard(data.report);
+      }
+      showToast('Analysis Complete', `Finished in ${data.elapsed}`, 'success');
+      if (data.output) log(data.output);
+    } else {
+      document.getElementById('analysisMsg').textContent = 'Failed!';
+      showToast('Analysis Failed', data.error || 'Unknown error', 'error');
+      if (data.stderr) log(data.stderr, true);
+    }
+  });
+
+  socket.on('rules_updated', (rules) => {
+    currentRules = rules;
+    updateRulesDisplay(rules);
+    log('Rules updated');
+  });
+}
+
+// ================================================================
+// Dashboard Updates
+// ================================================================
+function updateDashboard(report) {
+  if (!report) return;
+
+  // Stats cards
+  const s = report.summary || {};
+  document.getElementById('statPackets').textContent = formatNum(s.total_packets);
+  document.getElementById('statBytes').textContent = humanBytes(s.total_bytes);
+  document.getElementById('statForwarded').textContent = formatNum(s.forwarded);
+  document.getElementById('statDropped').textContent = formatNum(s.dropped);
+
+  const threats = report.threat_alerts || [];
+  const flows = report.flows || [];
+  document.getElementById('statThreats').textContent = formatNum(threats.length);
+  document.getElementById('statFlows').textContent = formatNum(flows.length);
+
+  // Charts
+  updateAppChart(report.bandwidth || {});
+  updateBwChart(report.bandwidth || {});
+
+  // Threats
+  updateThreats(threats);
+
+  // Flows table
+  loadFlows(1);
+}
+
+// ================================================================
+// Charts
+// ================================================================
+function updateAppChart(bandwidth) {
+  const labels = Object.keys(bandwidth);
+  const data = Object.values(bandwidth);
+
+  if (appChart) appChart.destroy();
+
+  appChart = new Chart(document.getElementById('appPie'), {
+    type: 'doughnut',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: data,
+        backgroundColor: COLORS.slice(0, labels.length),
+        borderWidth: 2,
+        borderColor: '#0a0d12'
+      }]
+    },
+    options: {
+      plugins: {
+        legend: { position: 'right', labels: { color: '#ccc', font: { size: 11 }, padding: 8 } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.label}: ${humanBytes(ctx.raw)} (${((ctx.raw / data.reduce((a, b) => a + b, 0)) * 100).toFixed(1)}%)`
+          }
+        }
+      },
+      cutout: '60%',
+      animation: { animateRotate: true, duration: 800 }
+    }
+  });
+}
+
+function updateBwChart(bandwidth) {
+  // Sort by bytes descending
+  const sorted = Object.entries(bandwidth).sort((a, b) => b[1] - a[1]);
+  const labels = sorted.map(e => e[0]);
+  const data = sorted.map(e => e[1]);
+
+  if (bwChart) bwChart.destroy();
+
+  bwChart = new Chart(document.getElementById('bwBar'), {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'Bandwidth',
+        data: data,
+        backgroundColor: COLORS.slice(0, labels.length),
+        borderRadius: 6
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => humanBytes(ctx.raw) } }
+      },
+      scales: {
+        x: {
+          ticks: { color: '#888', callback: (v) => humanBytes(v) },
+          grid: { color: '#1e2738' }
+        },
+        y: {
+          ticks: { color: '#ccc', font: { size: 11 } },
+          grid: { display: false }
+        }
+      },
+      animation: { duration: 600 }
+    }
+  });
+}
+
+// ================================================================
+// Threats
+// ================================================================
+function updateThreats(threats) {
+  const el = document.getElementById('threatsList');
+  const countEl = document.getElementById('threatCount');
+  countEl.textContent = threats.length;
+
+  if (threats.length === 0) {
+    el.innerHTML = '<div class="threats-empty">No threats detected.</div>';
+    return;
+  }
+
+  el.innerHTML = threats.map(t => `
+    <div class="threat-item">
+      <span class="badge badge-${t.type}">${t.type}</span>
+      <span class="threat-ip">${t.src_ip}</span>
+      <span class="threat-detail">${t.detail}</span>
+    </div>
+  `).join('');
+}
+
+// ================================================================
+// Flow Records
+// ================================================================
+function loadFlows(page) {
+  currentPage = page || 1;
+  const search = document.getElementById('flowSearch').value;
+
+  fetch(`/api/flows?page=${currentPage}&per_page=100&search=${encodeURIComponent(search)}&sort=${currentSort.field}&order=${currentSort.order}`)
+    .then(r => r.json())
+    .then(data => {
+      renderFlows(data.flows || []);
+      renderPagination(data.total, data.page, data.per_page, data.total_pages);
+      document.getElementById('flowsCount').textContent = `${formatNum(data.total)} total flows`;
+    })
+    .catch(err => {
+      log('Failed to load flows: ' + err, true);
+    });
+}
+
+function renderFlows(flows) {
+  const tbody = document.getElementById('flowsBody');
+  if (flows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#555;padding:30px">No flows found.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = flows.map(f => `
+    <tr>
+      <td title="${f.src}">${f.src}</td>
+      <td title="${f.dst}">${f.dst}</td>
+      <td>${f.proto || ''}</td>
+      <td><b>${f.app || ''}</b></td>
+      <td title="${f.domain || ''}" style="color:#aaa;max-width:200px;overflow:hidden;text-overflow:ellipsis">${f.domain || ''}</td>
+      <td>${formatNum(f.pkts)}</td>
+      <td>${humanBytes(f.bytes)}</td>
+      <td class="status-${f.status || 'FORWARDED'}">${f.status || ''}</td>
+      <td>${f.country || ''}</td>
+    </tr>
+  `).join('');
+}
+
+function renderPagination(total, page, perPage, totalPages) {
+  const el = document.getElementById('pagination');
+  if (totalPages <= 1) { el.innerHTML = ''; return; }
+
+  let html = '';
+  if (page > 1) html += `<button class="page-btn" onclick="loadFlows(${page - 1})">← Prev</button>`;
+
+  const start = Math.max(1, page - 3);
+  const end = Math.min(totalPages, page + 3);
+  for (let i = start; i <= end; i++) {
+    html += `<button class="page-btn ${i === page ? 'active' : ''}" onclick="loadFlows(${i})">${i}</button>`;
+  }
+
+  if (page < totalPages) html += `<button class="page-btn" onclick="loadFlows(${page + 1})">Next →</button>`;
+  el.innerHTML = html;
+}
+
+function searchFlows() {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => loadFlows(1), 400);
+}
+
+function sortFlows(field) {
+  if (currentSort.field === field) {
+    currentSort.order = currentSort.order === 'desc' ? 'asc' : 'desc';
+  } else {
+    currentSort.field = field;
+    currentSort.order = 'desc';
+  }
+  loadFlows(currentPage);
+}
+
+// ================================================================
+// Rules Management
+// ================================================================
+function updateRulesDisplay(rules) {
+  if (!rules) return;
+
+  // Blocked Apps
+  const appsEl = document.getElementById('blockedAppsTags');
+  if (rules.blocked_apps && rules.blocked_apps.length > 0) {
+    appsEl.innerHTML = rules.blocked_apps.map(a =>
+      `<span class="tag">${a} <span class="remove" onclick="removeRule('app','${a}')">✕</span></span>`
+    ).join('');
+  } else {
+    appsEl.innerHTML = '<span class="tag-empty">No apps blocked</span>';
+  }
+
+  // Blocked IPs
+  const ipsEl = document.getElementById('blockedIPsTags');
+  if (rules.blocked_ips && rules.blocked_ips.length > 0) {
+    ipsEl.innerHTML = rules.blocked_ips.map(ip =>
+      `<span class="tag">${ip} <span class="remove" onclick="removeRule('ip','${ip}')">✕</span></span>`
+    ).join('');
+  } else {
+    ipsEl.innerHTML = '<span class="tag-empty">No IPs blocked</span>';
+  }
+
+  // Blocked Domains
+  const domsEl = document.getElementById('blockedDomainsTags');
+  if (rules.blocked_domains && rules.blocked_domains.length > 0) {
+    domsEl.innerHTML = rules.blocked_domains.map(d =>
+      `<span class="tag">${d} <span class="remove" onclick="removeRule('domain','${d}')">✕</span></span>`
+    ).join('');
+  } else {
+    domsEl.innerHTML = '<span class="tag-empty">No domains blocked</span>';
+  }
+}
+
+function addRule(type) {
+  let value, body;
+  switch (type) {
+    case 'app':
+      value = document.getElementById('newAppInput').value;
+      if (!value) return;
+      body = { add_app: value };
+      document.getElementById('newAppInput').value = '';
+      break;
+    case 'ip':
+      value = document.getElementById('newIPInput').value.trim();
+      if (!value) return;
+      body = { add_ip: value };
+      document.getElementById('newIPInput').value = '';
+      break;
+    case 'domain':
+      value = document.getElementById('newDomainInput').value.trim();
+      if (!value) return;
+      body = { add_domain: value };
+      document.getElementById('newDomainInput').value = '';
+      break;
+  }
+
+  fetch('/api/rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  .then(r => r.json())
+  .then(rules => {
+    updateRulesDisplay(rules);
+    showToast('Rule Added', `Blocked ${type}: ${value}`, 'success');
+  })
+  .catch(err => showToast('Error', 'Failed to add rule', 'error'));
+}
+
+function removeRule(type, value) {
+  let body;
+  switch (type) {
+    case 'app': body = { remove_app: value }; break;
+    case 'ip': body = { remove_ip: value }; break;
+    case 'domain': body = { remove_domain: value }; break;
+  }
+
+  fetch('/api/rules', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  .then(r => r.json())
+  .then(rules => {
+    updateRulesDisplay(rules);
+    showToast('Rule Removed', `Unblocked ${type}: ${value}`, 'info');
+  })
+  .catch(err => showToast('Error', 'Failed to remove rule', 'error'));
+}
+
+// ================================================================
+// Analysis
+// ================================================================
+function runAnalysis() {
+  const pcap = document.getElementById('pcapSelect').value;
+  if (!pcap) {
+    showToast('Error', 'Select a PCAP file first', 'error');
+    return;
+  }
+
+  fetch('/api/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pcap_file: pcap })
+  })
+  .then(r => {
+    if (r.status === 409) {
+      showToast('Warning', 'Analysis already running', 'error');
+      return;
+    }
+    return r.json();
+  })
+  .catch(err => showToast('Error', 'Failed to start analysis', 'error'));
+}
+
+function updatePcapSelect(pcaps) {
+  const sel = document.getElementById('pcapSelect');
+  const prev = sel.value;
+  sel.innerHTML = pcaps.map(p =>
+    `<option value="${p.path}" ${p.path.includes('MY_Traffic') ? 'selected' : ''}>${p.path} (${p.size})</option>`
+  ).join('');
+  // Restore previous selection if it still exists
+  if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+
+function uploadPcap(input) {
+  const file = input.files[0];
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.pcap') && !file.name.toLowerCase().endsWith('.pcapng')) {
+    showToast('Error', 'Only .pcap and .pcapng files allowed', 'error');
+    return;
+  }
+  const formData = new FormData();
+  formData.append('file', file);
+  showToast('Uploading', `Uploading ${file.name} (${humanBytes(file.size)})...`, 'info');
+  log(`Uploading PCAP: ${file.name} (${humanBytes(file.size)})`);
+
+  fetch('/api/upload-pcap', { method: 'POST', body: formData })
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) {
+        showToast('Upload Failed', data.error, 'error');
+        log('Upload failed: ' + data.error, true);
+      } else {
+        showToast('Upload Complete', `${data.filename} (${data.size}) uploaded!`, 'success');
+        log(`Upload complete: ${data.path}`);
+        if (data.pcap_files) updatePcapSelect(data.pcap_files);
+        // Auto-select the uploaded file
+        document.getElementById('pcapSelect').value = data.path;
+      }
+      input.value = ''; // Reset file input
+    })
+    .catch(err => {
+      showToast('Error', 'Upload failed: ' + err, 'error');
+      input.value = '';
+    });
+}
+
+// ================================================================
+// Init
+// ================================================================
+window.addEventListener('load', () => {
+  connectSocket();
+  log('Dashboard initialized. Connecting to server...');
+});
+</script>
+
+</body>
+</html>
