@@ -260,8 +260,15 @@ private:
     }
     
     void classifyFlow(Packet& pkt, FlowEntry& flow) {
-        // Try SNI extraction for HTTPS
-        if (pkt.tuple.dst_port == 443 && pkt.payload_length > 5) {
+        const uint16_t dst = pkt.tuple.dst_port;
+        const uint16_t src = pkt.tuple.src_port;
+        const bool is_udp  = (pkt.tuple.protocol == 17);
+        const bool is_tcp  = (pkt.tuple.protocol == 6);
+
+        // ------------------------------------------------------------------
+        // 1. SNI extraction — TLS/HTTPS over TCP port 443
+        // ------------------------------------------------------------------
+        if (is_tcp && dst == 443 && pkt.payload_length > 5) {
             const uint8_t* payload = pkt.data.data() + pkt.payload_offset;
             auto sni = SNIExtractor::extract(payload, pkt.payload_length);
             if (sni) {
@@ -271,9 +278,25 @@ private:
                 return;
             }
         }
-        
-        // Try HTTP Host extraction
-        if (pkt.tuple.dst_port == 80 && pkt.payload_length > 10) {
+
+        // ------------------------------------------------------------------
+        // 2. SNI extraction — alternate HTTPS port 8443
+        // ------------------------------------------------------------------
+        if (is_tcp && (dst == 8443 || src == 8443) && pkt.payload_length > 5) {
+            const uint8_t* payload = pkt.data.data() + pkt.payload_offset;
+            auto sni = SNIExtractor::extract(payload, pkt.payload_length);
+            if (sni) {
+                flow.sni = *sni;
+                flow.app_type = sniToAppType(*sni);
+                flow.classified = true;
+                return;
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // 3. HTTP Host extraction — port 80 and 8080
+        // ------------------------------------------------------------------
+        if (is_tcp && (dst == 80 || dst == 8080) && pkt.payload_length > 10) {
             const uint8_t* payload = pkt.data.data() + pkt.payload_offset;
             auto host = HTTPHostExtractor::extract(payload, pkt.payload_length);
             if (host) {
@@ -283,20 +306,68 @@ private:
                 return;
             }
         }
-        
-        // DNS
-        if (pkt.tuple.dst_port == 53 || pkt.tuple.src_port == 53) {
+
+        // ------------------------------------------------------------------
+        // 4. DNS — UDP/TCP port 53
+        // ------------------------------------------------------------------
+        if (dst == 53 || src == 53) {
             flow.app_type = AppType::DNS;
             flow.classified = true;
             return;
         }
-        
-        // Port-based fallback (but don't mark as classified - might get SNI later)
-        if (pkt.tuple.dst_port == 443) {
-            flow.app_type = AppType::HTTPS;
-        } else if (pkt.tuple.dst_port == 80) {
-            flow.app_type = AppType::HTTP;
+
+        // ------------------------------------------------------------------
+        // 5. QUIC — UDP port 443 (YouTube, Google, Chrome ka fast protocol)
+        //    QUIC ki SNI encrypted hoti hai, lekin port + IP se identify ho sakta hai
+        // ------------------------------------------------------------------
+        if (is_udp && (dst == 443 || src == 443)) {
+            flow.app_type = AppType::QUIC;
+            flow.classified = true;
+
+            if (pkt.payload_length > 0) {
+                const uint8_t first_byte = pkt.data[pkt.payload_offset];
+                // QUIC Long Header: top 2 bits must be 11 (0xC0 range)
+                if ((first_byte & 0xC0) == 0xC0 && pkt.payload_length > 5) {
+                    // Identify Google IPs: 142.250.x.x, 172.217.x.x, 216.58.x.x
+                    uint32_t dip = pkt.tuple.dst_ip;
+                    uint8_t o1 = dip & 0xFF;
+                    uint8_t o2 = (dip >> 8) & 0xFF;
+                    if ((o1 == 142 && o2 == 250) ||
+                        (o1 == 172 && o2 == 217) ||
+                        (o1 == 216 && o2 == 58)) {
+                        flow.sni = "[QUIC/Google]";
+                        flow.app_type = AppType::GOOGLE;
+                    } else {
+                        flow.sni = "[QUIC/Encrypted]";
+                    }
+                }
+            }
+            return;
         }
+
+        // ------------------------------------------------------------------
+        // 6. WhatsApp / Jabber — XMPP port
+        // ------------------------------------------------------------------
+        if (dst == 5222 || dst == 5223 || src == 5222 || src == 5223) {
+            flow.app_type = AppType::WHATSAPP;
+            flow.classified = true;
+            return;
+        }
+
+        // ------------------------------------------------------------------
+        // 7. Zoom / Discord / WebRTC — STUN/TURN ports
+        // ------------------------------------------------------------------
+        if (is_udp && (dst == 3478 || src == 3478 || dst == 3479)) {
+            flow.app_type = AppType::ZOOM;
+            flow.classified = true;
+            return;
+        }
+
+        // ------------------------------------------------------------------
+        // 8. Port-based fallback
+        // ------------------------------------------------------------------
+        if (dst == 443 || src == 443) { flow.app_type = AppType::HTTPS; return; }
+        if (dst == 80  || dst == 8080){ flow.app_type = AppType::HTTP;  return; }
     }
 };
 
