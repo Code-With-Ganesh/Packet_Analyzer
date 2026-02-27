@@ -78,6 +78,125 @@ private:
 };
 
 // =============================================================================
+// DNS Cache — IP → Domain mapping (global, thread-safe)
+// Ye sabse advanced method hai:
+// DNS response pakdo → IP save karo → Baad mein QUIC/HTTPS pe use karo
+// =============================================================================
+class DNSCache {
+public:
+    // DNS response parse karke IP→domain map build karo
+    void parseDNSResponse(const uint8_t* payload, size_t length) {
+        // DNS header = 12 bytes
+        if (length < 12) return;
+
+        // Byte 2-3: Flags — QR bit (bit 15) = 1 matlab Response
+        uint16_t flags = (payload[2] << 8) | payload[3];
+        bool is_response = (flags & 0x8000) != 0;
+        if (!is_response) return;  // Query hai, Response nahi — skip
+
+        uint16_t qdcount = (payload[4] << 8) | payload[5];  // Questions
+        uint16_t ancount = (payload[6] << 8) | payload[7];  // Answers
+        if (ancount == 0) return;
+
+        size_t offset = 12;
+
+        // Question section skip karo
+        for (int q = 0; q < qdcount && offset < length; q++) {
+            // Domain name skip (labels)
+            while (offset < length && payload[offset] != 0) {
+                if ((payload[offset] & 0xC0) == 0xC0) { offset += 2; break; }
+                offset += payload[offset] + 1;
+            }
+            if (offset < length && payload[offset] == 0) offset++;
+            offset += 4;  // QTYPE + QCLASS
+        }
+
+        // Answer section parse karo — domain name yaad karo for this answer set
+        std::string last_domain;
+
+        for (int a = 0; a < ancount && offset < length; a++) {
+            // Name field (could be pointer or label)
+            std::string name = extractDNSName(payload, length, offset);
+
+            if (offset + 10 > length) break;
+            uint16_t rtype  = (payload[offset] << 8) | payload[offset+1];
+            // uint16_t rclass = (payload[offset+2] << 8) | payload[offset+3];
+            // uint32_t ttl    = ...
+            uint16_t rdlen  = (payload[offset+8] << 8) | payload[offset+9];
+            offset += 10;
+
+            if (!name.empty()) last_domain = name;
+
+            // Type A = IPv4 address (rtype == 1)
+            if (rtype == 1 && rdlen == 4 && offset + 4 <= length) {
+                uint32_t ip = (payload[offset])       |
+                              (payload[offset+1] << 8) |
+                              (payload[offset+2] << 16)|
+                              (payload[offset+3] << 24);
+
+                if (!last_domain.empty()) {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    ip_to_domain_[ip] = last_domain;
+                }
+            }
+            offset += rdlen;
+        }
+    }
+
+    // IP se domain lookup karo
+    std::string lookup(uint32_t ip) const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = ip_to_domain_.find(ip);
+        if (it != ip_to_domain_.end()) return it->second;
+        return "";
+    }
+
+    size_t size() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return ip_to_domain_.size();
+    }
+
+private:
+    // DNS name labels read karo (compression pointers handle karo)
+    std::string extractDNSName(const uint8_t* data, size_t len, size_t& offset) {
+        std::string name;
+        int jumps = 0;
+        size_t pos = offset;
+        bool jumped = false;
+
+        while (pos < len) {
+            uint8_t label_len = data[pos];
+            if (label_len == 0) {
+                if (!jumped) offset = pos + 1;
+                break;
+            }
+            // Compression pointer: top 2 bits = 11
+            if ((label_len & 0xC0) == 0xC0) {
+                if (pos + 1 >= len) break;
+                uint16_t ptr = ((label_len & 0x3F) << 8) | data[pos+1];
+                if (!jumped) offset = pos + 2;
+                pos = ptr;
+                jumped = true;
+                if (++jumps > 10) break;  // infinite loop protection
+                continue;
+            }
+            pos++;
+            if (pos + label_len > len) break;
+            if (!name.empty()) name += '.';
+            name.append(reinterpret_cast<const char*>(data + pos), label_len);
+            pos += label_len;
+        }
+        return name;
+    }
+
+    mutable std::mutex mutex_;
+    std::unordered_map<uint32_t, std::string> ip_to_domain_;
+};
+
+// Global DNS cache — sab threads share karte hain
+static DNSCache g_dns_cache;
+
+// =============================================================================
 // Packet Job - Contains all packet data (self-contained, no pointers)
 // =============================================================================
 struct Packet {
@@ -309,32 +428,42 @@ private:
 
         // ------------------------------------------------------------------
         // 4. DNS — UDP/TCP port 53
+        //    Response parse karo → IP→Domain cache build karo (CORE OF DNS CORRELATION)
         // ------------------------------------------------------------------
         if (dst == 53 || src == 53) {
             flow.app_type = AppType::DNS;
             flow.classified = true;
+            // DNS Response (src port 53) parse karke IP→domain map banao
+            if (src == 53 && pkt.payload_length > 12) {
+                const uint8_t* payload = pkt.data.data() + pkt.payload_offset;
+                g_dns_cache.parseDNSResponse(payload, pkt.payload_length);
+            }
             return;
         }
 
         // ------------------------------------------------------------------
-        // 5. QUIC — UDP port 443 (YouTube, Google, Chrome ka fast protocol)
-        //    QUIC ki SNI encrypted hoti hai — IP ranges se identify karte hain
+        // 5. QUIC — UDP port 443
+        //    Priority order: DNS Cache (best) → IP Range (fallback) → Generic
         // ------------------------------------------------------------------
         if (is_udp && (dst == 443 || src == 443)) {
-            // Pehle IP range se try karo
-            AppType ip_app = ipToAppType(pkt.tuple.dst_ip);
-            if (ip_app == AppType::UNKNOWN) {
-                ip_app = ipToAppType(pkt.tuple.src_ip); // reverse direction bhi try karo
+            // DNS Cache se pehle try karo — SABSE ACCURATE ✅
+            std::string domain = g_dns_cache.lookup(pkt.tuple.dst_ip);
+            if (domain.empty()) domain = g_dns_cache.lookup(pkt.tuple.src_ip);
+
+            if (!domain.empty()) {
+                flow.sni = domain;                     // Real domain: "www.youtube.com"
+                flow.app_type = sniToAppType(domain);  // Exact app identify
+                flow.classified = true;
+                return;
             }
 
-            if (ip_app != AppType::UNKNOWN) {
-                flow.app_type = ip_app;
-                // SNI mein label lagao taaki output mein dikh sake
-                flow.sni = "[QUIC/" + appTypeToString(ip_app) + "]";
-            } else {
-                flow.app_type = AppType::QUIC;
-                flow.sni = "[QUIC/Encrypted]";
-            }
+            // DNS cache miss — IP range fallback
+            AppType ip_app = ipToAppType(pkt.tuple.dst_ip);
+            if (ip_app == AppType::UNKNOWN) ip_app = ipToAppType(pkt.tuple.src_ip);
+            flow.app_type = (ip_app != AppType::UNKNOWN) ? ip_app : AppType::QUIC;
+            flow.sni = (ip_app != AppType::UNKNOWN)
+                        ? "[QUIC/" + appTypeToString(ip_app) + "]"
+                        : "[QUIC/Encrypted]";
             flow.classified = true;
             return;
         }
@@ -358,16 +487,24 @@ private:
         }
 
         // ------------------------------------------------------------------
-        // 8. Port-based fallback + IP-based identification
+        // 8. Port-based fallback — DNS Cache → IP Range → Generic
         // ------------------------------------------------------------------
         if (dst == 443 || src == 443) {
-            // IP se identify karne ki koshish karo
+            // DNS cache first
+            std::string domain = g_dns_cache.lookup(pkt.tuple.dst_ip);
+            if (domain.empty()) domain = g_dns_cache.lookup(pkt.tuple.src_ip);
+            if (!domain.empty()) {
+                flow.sni = domain;
+                flow.app_type = sniToAppType(domain);
+                return;
+            }
+            // IP range fallback
             AppType ip_app = ipToAppType(pkt.tuple.dst_ip);
             if (ip_app == AppType::UNKNOWN) ip_app = ipToAppType(pkt.tuple.src_ip);
             flow.app_type = (ip_app != AppType::UNKNOWN) ? ip_app : AppType::HTTPS;
             return;
         }
-        if (dst == 80  || dst == 8080){ flow.app_type = AppType::HTTP;  return; }
+        if (dst == 80 || dst == 8080) { flow.app_type = AppType::HTTP; return; }
     }
 };
 
